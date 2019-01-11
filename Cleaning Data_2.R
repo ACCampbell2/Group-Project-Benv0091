@@ -9,7 +9,19 @@ library(rvest)
 library(httr)
 library(jsonlite)
 library(modelr)
+library(randomForest)
 
+library(tree)
+library(stats)
+
+library(dynlm)
+
+
+library(leaps)
+
+library(MASS)
+
+library(caret)
 
 # Import -------------------------------------------------------------------
 
@@ -97,9 +109,8 @@ pvsunlab_2016$Datetime <- ymd_hms(pvsunlab_2016$Datetime)
 meteo_2017_wo <- subset(meteo_2017, select = -c(Precipitation, Atmospheric_Pressure))
 meteo_2016_wo<- subset(meteo_2016, select = -c(Precipitation, Atmospheric_Pressure))
 
-data1 = full_join(meteo_2014,meteo_2015)
-data2= full_join(meteo_2016,meteo_2017)
-total_meteo=full_join(data1,data2)
+
+total_meteo=full_join(meteo_2016,meteo_2017)
 
 total_pvsunlab =full_join(pvsunlab_2016,pvsunlab_2017)
 
@@ -190,28 +201,268 @@ total_meteo <- mutate(total_meteo, Wind_Direction = cos(Wind_Direction))
 
 total_meteo <- mutate(total_meteo, Radiation_ratio = Diffuse_Radiation/Global_Radiation)
 
-a <- subset(total_meteo, Radiation_ratio >0.95)
-
 ## 01-01-2014 was a cloudy day especially morining till 9 and after 3 next day also cloudy apart from 12-3/5
 ## Also works for 2014-04-15
 
 ## Could generalize saying any value of 0.9 is either morning or an overacast day?
 
-Overcast_data <- a
+combined_data <- left_join(total_pvsunlab,total_meteo,by="Datetime")
+combined_data <- arrange(combined_data,Datetime)
+
+combined_data <- combined_data[!is.na(combined_data$B_Optimal_Power), ]
+## Drop missing optimal power
+combined_data <- drop_na(combined_data)
+## drop  rest of the na's
 
 
-combined_overcast <- left_join(total_pvsunlab,Overcast_data,by="Datetime")
-combined_overcast <- arrange(combined_overcast,Datetime)
 
-combined_overcast <- combined_overcast[!is.na(combined_overcast$B_Optimal_Power), ]
+# Exploratory Graphs ------------------------------------------------------
 
-combined_overcast <- drop_na(combined_overcast)
+## Plot to show distribution of temperature over the two years.
 
-x_overcast <- as.matrix(combined_overcast[,c(26:31,36)])
+ggplot(combined_data)+geom_boxplot(aes(x=as.factor(Month), y=Ambient_Temperature))
+
+## Now comparing each year seperately
+
+combined_data$Year <- year(combined_data$Datetime)
+
+ggplot(combined_data)+geom_line(aes(x=as.factor(Month), y= Ambient_Temperature, color = Year))
+
+by_date <- combined_data %>% group_by(Date) %>%
+summarise(B_Optimal_Power = mean(B_Optimal_Power), Ambient_Temperature = mean(Ambient_Temperature), Global_Radiation = mean(Global_Radiation),
+         Diffuse_Radiation = mean(Global_Radiation),UV = mean(UV), Wind_Velocity = mean(Wind_Velocity),
+        Wind_Direction = mean(Wind_Direction), Precipitation = mean(Precipitation), 
+                              Atmospheric_Pressure =mean(Atmospheric_Pressure), Year = mean(Year), Month = mean(Month))
+  
+ggplot(by_date,aes(x = Date, y= Ambient_Temperature, color = Year))+ geom_point()+ geom_smooth(col = 'black')
+
+ggplot(by_date,aes(x = Date, y= B_Optimal_Power, color = Year))+ geom_point()+ geom_smooth(col = 'black')
+
+ggplot(by_date,aes(x = as.factor(Month), y= B_Optimal_Power))+ geom_boxplot()
+
+## More consistent power outputs in the summer
+
+# Classification ----------------------------------------------------------
+
+ggplot(combined_data)+geom_point(aes(x=Radiation_ratio, y= B_Optimal_Power))
+
+regression_tree <- tree(B_Optimal_Power ~ Global_Radiation + Diffuse_Radiation, data = combined_data)
+plot(regression_tree)
+text(regression_tree, cex=1)
+
+regression_tree_2 <- tree(B_Optimal_Power ~ Radiation_ratio, data = combined_data)
+plot(regression_tree_2)
+text(regression_tree_2, cex=1)
+
+full_regression_tree <- tree(B_Optimal_Power ~., data = combined_data[,c(19,26:33)])
+plot(full_regression_tree)
+text(full_regression_tree, cex=.5)
+
+summary(full_regression_tree)
+
+combined_overcast <- subset(combined_data, Radiation_ratio >0.37 && Radiation_ratio < 1)
+combiend_sunny <- subset(combined_data, Radiation_ratio <= 0.37)
+
+x_overcast <- as.matrix(combined_overcast[,c(26:31,35:37)])
 y_overcast <- as.matrix(combined_overcast[,19])
 
+x_sunny <- as.matrix(combined_sunny[,c(26:31,35:37)])
+y_sunny <- as.matrix(combined_sunny[,19])
 
-ridge <- glmnet(x_overcast,y_overcast, intercept= FALSE, family = "gaussian",alpha = 0)
+## Could possibly split these down into two sub groups again as suggested by the regression tree
+
+# Stepwise regression -----------------------------------------------------
+
+## Remove the other pvsunlab values from dataset
+
+cropped_sunny <- combined_sunny[,c(1,19,26:33,35:37)]
+
+full_sunny_model <- lm(B_Optimal_Power ~ .-Datetime,
+                       data = cropped_sunny)
+
+step_sunny_model <- stepAIC(full_sunny_model, direction = "both", trace=FALSE)
+summary(step_sunny_model)
+
+## R^2 of 0.6424 including temp, global, diffuse and UV radiation, Wind Velocity and Atmo Pressure. Indluing dates massively increases R^2 to 0.75
+
+cropped_overcast <- combined_overcast[,c(1,19,26:33, 35:37)]
+
+full_overcast_model <- lm(B_Optimal_Power ~ .-Datetime,
+                          data = cropped_overcast)
+
+step_overcast_model <- stepAIC(full_overcast_model, direction = "both", trace=FALSE)
+summary(step_overcast_model)
+
+
+# Normal Linear Regression ------------------------------------------------
+
+regression_model_overcast <- lm(B_Optimal_Power ~ 
+                                  Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+
+                                  Wind_Velocity+Atmospheric_Pressure+Hour+Month,
+                                data = combined_overcast)
+
+reg_overcast <- add_predictions(combined_overcast,regression_model_overcast, var ="Regression_Prediction")
+reg_overcast <- add_residuals(reg_overcast,regression_model_overcast, var ="Regression_Residuals")
+
+summary(regression_model_overcast)
+
+regression_model_sunny <- lm(B_Optimal_Power ~ 
+                                  Ambient_Temperature+Global_Radiation+
+                               Wind_Velocity+UV+Atmospheric_Pressure+Month+Hour,
+                                data = combined_sunny)
+
+
+reg_sunny <- add_predictions(combined_sunny,regression_model_sunny, var ="Regression_Prediction")
+reg_sunny <- add_residuals(reg_sunny,regression_model_sunny, var ="Regression_Residuals")
+
+summary(regression_model_sunny)
+
+ggplot(reg)
+
+
+# Another subset ----------------------------------------------------------
+
+combined_overcast_1 <- subset(combined_overcast, Radiation_ratio < 0.871)
+combined_overcast_2 <- subset(combined_overcast, Radiation_ratio >= 0.871)
+
+cropped_overcast_1 <- combined_overcast_1[,c(1,19,26:33, 35:37)]
+
+full_overcast_model_1 <- lm(B_Optimal_Power ~ .-Datetime-Overcast_Prediction,
+                          data = cropped_overcast_1)
+
+step_overcast_model_1 <- stepAIC(full_overcast_model_1, direction = "both", trace=FALSE)
+summary(step_overcast_model_1)
+
+cropped_overcast_2 <- combined_overcast_2[,c(1,19,26:33, 35:37)]
+
+full_overcast_model_2 <- lm(B_Optimal_Power ~ .-Datetime-Overcast_Prediction,
+                            data = cropped_overcast_2)
+
+step_overcast_model_2 <- stepAIC(full_overcast_model_2, direction = "both", trace=FALSE)
+summary(step_overcast_model_2)
+
+
+## model_2 is worse of the two
+
+combined_sunny_1 <- subset(combined_sunny, Radiation_ratio < 0.163)
+combined_sunny_2 <- subset(combined_sunny, Radiation_ratio >= 0.163)
+
+cropped_sunny_1 <- combined_sunny_1[,c(1,19,26:33,35:37)]
+
+full_sunny_model_1 <- lm(B_Optimal_Power ~ .-Datetime-Sunny_Prediction,
+                       data = cropped_sunny_1)
+
+step_sunny_model_1 <- stepAIC(full_sunny_model_1, direction = "both", trace=FALSE)
+summary(step_sunny_model_1)
+
+cropped_sunny_2 <- combined_sunny_2[,c(1,19,26:33,35:37)]
+
+full_sunny_model_2 <- lm(B_Optimal_Power ~ .-Datetime-Sunny_Prediction,
+                       data = cropped_sunny_2)
+
+step_sunny_model_2 <- stepAIC(full_sunny_model_2, direction = "both", trace=FALSE)
+summary(step_sunny_model_2)
+
+## Worse for model 2 but model 1 is much better??
+
+
+
+# Further Regression Overcast Model -----------------------------------------------
+
+regression_model_overcast_1 <- lm(B_Optimal_Power ~ 
+                                  Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+
+                                  Wind_Velocity+Atmospheric_Pressure+Hour+Month,
+                                data = combined_overcast_1)
+
+reg_overcast <- add_predictions(reg_overcast,regression_model_overcast_1, var ="Regression_Prediction_1")
+reg_overcast <- add_residuals(reg_overcast,regression_model_overcast_1, var ="Regression_Residuals_1")
+
+summary(regression_model_overcast_1)
+
+regression_model_overcast_2 <- lm(B_Optimal_Power ~ 
+                                    Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+
+                                    Wind_Velocity+Atmospheric_Pressure+Hour+Month,
+                                  data = combined_overcast_2)
+
+reg_overcast <- add_predictions(reg_overcast,regression_model_overcast_2, var ="Regression_Prediction_2")
+reg_overcast <- add_residuals(reg_overcast,regression_model_overcast_2, var ="Regression_Residuals_2")
+
+summary(regression_model_overcast_2)
+
+ggplot(reg_overcast[115000:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+ggplot(reg_overcast[115000:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+ggplot(reg_overcast[115000:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction), col = 'black')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+ggplot(reg_overcast[115000:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction), col = 'black')+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+ggplot(reg_overcast[117500:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')
+
+
+# Further Regression Sunny Model ------------------------------------------
+
+
+
+
+regression_model_sunny_1 <- lm(B_Optimal_Power ~ 
+                                 Ambient_Temperature+Global_Radiation+Diffuse_Radiation+
+                                 UV+Atmospheric_Pressure+Month+Hour,
+                               data = combined_sunny_1)
+
+reg_sunny <- add_predictions(reg_sunny,regression_model_sunny_1, var ="Regression_Prediction_1")
+reg_sunny <- add_residuals(reg_sunny,regression_model_sunny_1, var ="Regression_Residuals_1")
+
+summary(regression_model_sunny_1)
+
+regression_model_sunny_2 <- lm(B_Optimal_Power ~ 
+                               Ambient_Temperature+Global_Radiation+Diffuse_Radiation+Precipitation+
+                               Wind_Velocity+UV+Atmospheric_Pressure+Month+Hour,
+                             data = combined_sunny_2)
+
+reg_sunny <- add_predictions(reg_sunny,regression_model_sunny_2, var ="Regression_Prediction_2")
+reg_sunny <- add_residuals(reg_sunny,regression_model_sunny_2, var ="Regression_Residuals_2")
+
+summary(regression_model_sunny_2)
+reg_overcast$Reg
+
+ggplot(reg_sunny[115000:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+ggplot(reg_sunny[115000:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+ggplot(reg_sunny[115000:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction), col = 'black')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+ggplot(reg_sunny[115000:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction), col = 'black')+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+ggplot(reg_sunny[117500:118000,])+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
+  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')
+
+# Ridge Regression Overcast --------------------------------------------------------
+
+ridge_overcast <- glmnet(x_overcast,y_overcast, intercept= FALSE, family = "gaussian",alpha = 0)
 print(ridge)
 
 plot(ridge,xvar ="lambda")
@@ -224,16 +475,16 @@ cvfit_overcast$lambda.1se
 
 s_coef <- coef.cv.glmnet(cvfit_overcast, s="lambda.1se")
 
-
 prediction <- predict(cvfit_overcast,x_overcast,s="lambda.1se")
 combined_overcast <- data.frame(combined_overcast,prediction)
 names(combined_overcast)[37] <- "Overcast_Prediction"
+
+r2 <- ridge_overcast$glmnet.fit$dev.ratio[which(fitnet$glmnet.fit$lambda == fitnet$lambda.1se)] 
 
 ggplot(combined_overcast[1:40000,])+geom_line(aes(x=Datetime, y=B_Optimal_Power),col='red')+
   geom_line(aes(x=Datetime, y= Overcast_Prediction), col='blue')
 
 difference <- prediction - y_overcast
-
 
 plot(combined_overcast$Datetime,prediction, type = "l")
 
@@ -245,66 +496,70 @@ summary(difference)
 ggplot(meteo_2016)+geom_line(aes(x=Datetime,y=Ambient_Temperature))
 ## Seems to over predict by a constant value and under predicts more often than over.
 
-b <- subset(total_meteo, Radiation_ratio <= 0.95)
 
-Sunny_data <- b
-
-
-combined_sunny <- left_join(total_pvsunlab,Sunny_data,by="Datetime")
-combined_sunny <- arrange(combined_sunny,Datetime)
-
-combined_overcast <- combined_overcast[!is.na(combined_overcast$B_Optimal_Power), ]
-
-combined_overcast <- drop_na(combined_overcast)
-
-x_overcast <- as.matrix(combined_overcast[,c(26:31,36)])
-y_overcast <- as.matrix(combined_overcast[,19])
+# Ridge Regression Sunny --------------------------------------------------
 
 
 
-ridge <- glmnet(x_overcast,y_overcast,family = "gaussian",alpha = 0)
-print(ridge)
+ridge_sunny <- glmnet(x_sunny,y_sunny,family = "gaussian",alpha = 0)
+print(ridge_sunny)
 
-plot(ridge,xvar ="lambda")
+cvfit_sunny <- cv.glmnet(x_sunny,y_sunny)
+plot(cvfit_sunny)
 
-cvfit_overcast <- cv.glmnet(x_overcast,y_overcast)
-plot(cvfit_overcast)
+cvfit_sunny$lambda.1se
 
-cvfit_overcast$lambda.min
-cvfit_overcast$lambda.1se
+coef.cv.glmnet(cvfit_sunny, s="lambda.1se")
+prediction_sunny <- predict(cvfit_sunny,x_sunny,s="lambda.1se")
 
-coef.cv.glmnet(cvfit_overcast, s="lambda.1se")
-prediction <- predict(cvfit_overcast,x_overcast,s="lambda.1se")
+difference_sunny <- prediction_sunny - y_sunny
 
-difference <- prediction - y_overcast
 
-summary(combined_2014$B_Optimal_Power)
+data.f_sunny<- data.frame(combined_sunny$Datetime,prediction_sunny,y_sunny)
+ggplot(data.f_sunny,aes(combined_sunny$Datetime))+ geom_line(aes(y=difference_sunny),colour = "red")
 
-plot(combined_overcast$Datetime,prediction, type = "l")
+summary(difference_sunny)
 
-data.f <- data.frame(combined_overcast$Datetime,prediction,y_overcast)
-ggplot(data.f,aes(combined_overcast$Datetime))+ geom_line(aes(y=difference),colour = "red")
+combined_sunny <- data.frame(combined_sunny,prediction_sunny)
+names(combined_sunny)[37] <- "Sunny_Prediction"
 
-summary(difference)
+ggplot(combined_sunny[1:40000,])+geom_line(aes(x=Datetime, y=B_Optimal_Power),col='red')+
+  geom_line(aes(x=Datetime, y= Sunny_Prediction), col='blue')
+
+## Under predicts for jan to march but over predicts in june 
+
+
+
 
 # Web Scrapping  ----------------------------------------------------------
 
 ## To get information of cloudy days
 
-url <- 'https://www.worldweatheronline.com/faro-weather-history/faro/pt.aspx'
+url <- 'https://sunsetsunrisetime.com/portugal/faro_16730.html'
 
 faro_webpage <- read_html(url)
 
 ## Can't see /faro-weather-history/ or /faro/ or /pt.aspx in robots.txt file so assume it is ok to scrape this page
 
-dates <- html_nodes(faro_webpage, ".MainContentHolder_txtPastDate")
-head(dates)
- API_key <- '7065813102924e24939231735190901'
+sunrise_data <- html_nodes(faro_webpage, "table")
+head(sunrise_data)
+
+h <- html_nodes(faro_webpage, ".period-link")
+head(h)
+
+sunrise_Table <- faro_webpage %>% 
+  html_nodes("#data_table_1") %>% html_table(fill=TRUE) %>% .[[1]]
+
+sunrise_table <- html_table(faro_webpage, 'data_table_1', fill=TRUE)
+
+API_key <- '7065813102924e24939231735190901'
  
-url <- GET(url = 'http://api.worldweatheronline.com/premium/v1/past-weather.ashx?key=7065813102924e24939231735190901&q=London&format=json&extra=Faro&date=2017-12-01&enddate=2017-12-31&includelocation=yes&show_comments=yes&tp=tp=1')
+sunrise <- url %>%
+    html() %>%
+    read_html(xpath='//*[@id="data_table_1"]') %>%
+   html_table(fill=TRUE)
 
-fromJSON(url)
-
+head(population)
 ## dUNNO
 
 # Group/Aggregate the data ----------------------------------------------------------
