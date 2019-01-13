@@ -242,7 +242,7 @@ train_sample_overcast <- sample(1:nrow(combined_overcast),0.8*nrow(combined_over
 combined_overcast <- combined_overcast[train_sample_overcast,]
 combined_overcast_test <- combined_overcast[-train_sample_overcast,]
 
-combiend_sunny <- subset(combined_data, Radiation_ratio <= 0.36)
+combined_sunny <- subset(combined_data, Radiation_ratio <= 0.36)
 train_sample_sunny <- sample(1:nrow(combined_sunny),0.9*nrow(combined_sunny))
 combined_sunny <- combined_sunny[train_sample_sunny,]
 combined_sunny_test <- combined_sunny[-train_sample_sunny,]
@@ -325,7 +325,7 @@ combined_sunny_2 <- subset(combined_sunny, Radiation_ratio >= 0.163)
 
 cropped_sunny_1 <- combined_sunny_1
 
-full_sunny_model_1 <- lm(B_Optimal_Power ~ .-Datetime-Sunny_Prediction,
+full_sunny_model_1 <- lm(B_Optimal_Power ~ .-Datetime,
                        data = cropped_sunny_1)
 
 step_sunny_model_1 <- stepAIC(full_sunny_model_1, direction = "both", trace=FALSE)
@@ -333,7 +333,7 @@ summary(step_sunny_model_1)
 
 cropped_sunny_2 <- combined_sunny_2
 
-full_sunny_model_2 <- lm(B_Optimal_Power ~ .-Datetime-Sunny_Prediction,
+full_sunny_model_2 <- lm(B_Optimal_Power ~ .-Datetime,
                        data = cropped_sunny_2)
 
 step_sunny_model_2 <- stepAIC(full_sunny_model_2, direction = "both", trace=FALSE)
@@ -365,28 +365,6 @@ reg_overcast <- add_residuals(reg_overcast,regression_model_overcast_2, var ="Re
 
 summary(regression_model_overcast_2)
 
-ggplot(reg_overcast[115000:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
-
-ggplot(reg_overcast[115000:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
-
-ggplot(reg_overcast[115000:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction), col = 'black')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
-
-ggplot(reg_overcast[115000:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction), col = 'black')+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
-
-ggplot(reg_overcast[117500:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')
-
 
 # Further Regression Sunny Model ------------------------------------------
 
@@ -409,30 +387,6 @@ reg_sunny <- add_predictions(reg_sunny,regression_model_sunny_2, var ="Regressio
 reg_sunny <- add_residuals(reg_sunny,regression_model_sunny_2, var ="Regression_Residuals_2")
 
 summary(regression_model_sunny_2)
-
-
-ggplot(reg_sunny[115000:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
-
-ggplot(reg_sunny[115000:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
-
-ggplot(reg_sunny[115000:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction), col = 'black')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
-
-ggplot(reg_sunny[115000:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction), col = 'black')+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
-
-ggplot(reg_sunny[117500:118000,])+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
-  geom_point(aes(x=Datetime, y=B_Optimal_Power))
 
 
 # Final Sunlab regression -------------------------------------------------
@@ -497,10 +451,12 @@ Full_model_error_plot
 Baseline_and_time_model <- summary(lm(B_Optimal_Power ~ 
              Ambient_Temperature+Global_Radiation+Diffuse_Radiation+
              Wind_Velocity+UV+Atmospheric_Pressure+Month+Hour, data = combined_data))
+Baseline_and_time_model
 
 Baseline_model <- summary(lm(B_Optimal_Power ~ 
              Ambient_Temperature+Global_Radiation+Diffuse_Radiation+
              Wind_Velocity+UV+Atmospheric_Pressure, data = combined_data))
+Baseline_model
 
 
 ## Not a large improvement in R^2 value after segmenting the data but still an improvement.
@@ -729,7 +685,8 @@ sun <- full_join(sun_1,sun_2)
 overcast <- full_join(overcast_1,overcast_2)
 final_regression_data_ten_min <- full_join(sun,overcast)
 
-r2_value_ten_min <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction_ten_min)^2
+r2_value_ten_min <- cor(final_regression_data_ten_min$B_Optimal_Power, 
+                        final_regression_data_ten_min$Regression_Prediction_ten_min)^2
 r2_value_ten_min
 
 
