@@ -10,17 +10,11 @@ library(httr)
 library(jsonlite)
 library(modelr)
 library(randomForest)
-
 library(tree)
 library(stats)
-
 library(dynlm)
-
-
 library(leaps)
-
 library(MASS)
-
 library(caret)
 
 # Import -------------------------------------------------------------------
@@ -164,30 +158,12 @@ meteo_2016 <- meteo_2016 %>% filter(Atmospheric_Pressure < 2000, Atmospheric_Pre
 
 summary(total_meteo)
 
-## Removing extreme values by catergory 
-
-## setting min and max ambient temperature should realistically be between 44 and -2 
-
 total_meteo <- total_meteo %>% filter(Ambient_Temperature < 44, Ambient_Temperature > -5)
-
-## Shouldn't have a negative for radiation or values of over 2,000 really so can set these as boundaries
-
 total_meteo <- total_meteo %>% filter(Global_Radiation < 2000, Global_Radiation > -2)
-
-## Diffuse is less than global radiation but not neccessarily the largest global radiation values that lead to largest diffuse 
-## Max of about 800 
-## May not be worth removing small negatives as rest of the data maybe reasonable.
-
 total_meteo <- total_meteo %>% filter(Diffuse_Radiation < 1000, Diffuse_Radiation > -2)
-
 total_meteo <- total_meteo %>% filter(UV < 500, UV > -2)
-
-## One of these 3 removed all the data by accident, also is technically speed not velocity as doesn't have direction in one.
-
 total_meteo <- total_meteo %>% filter(Wind_Velocity < 200, Wind_Velocity > -2)
-
 total_meteo <- total_meteo %>% filter(Precipitation < 100, Precipitation > -2)
-
 total_meteo <- total_meteo %>% filter(Atmospheric_Pressure < 2000, Atmospheric_Pressure > -2)
 
 summary(total_meteo)
@@ -213,8 +189,6 @@ combined_data <- combined_data[!is.na(combined_data$B_Optimal_Power), ]
 ## Drop missing optimal power
 combined_data <- drop_na(combined_data)
 ## drop  rest of the na's
-
-
 
 # Exploratory Graphs ------------------------------------------------------
 
@@ -260,7 +234,7 @@ text(full_regression_tree, cex=.5)
 
 summary(full_regression_tree)
 
-combined_overcast <- subset(combined_data, Radiation_ratio >0.37 && Radiation_ratio < 1)
+combined_overcast <- subset(combined_data, Radiation_ratio >0.37 & Radiation_ratio < 1.2)
 combiend_sunny <- subset(combined_data, Radiation_ratio <= 0.37)
 
 x_overcast <- as.matrix(combined_overcast[,c(26:31,35:37)])
@@ -322,8 +296,8 @@ ggplot(reg)
 
 # Another subset ----------------------------------------------------------
 
-combined_overcast_1 <- subset(combined_overcast, Radiation_ratio < 0.871)
-combined_overcast_2 <- subset(combined_overcast, Radiation_ratio >= 0.871)
+combined_overcast_1 <- subset(combined_overcast, Radiation_ratio <= 0.871)
+combined_overcast_2 <- subset(combined_overcast, Radiation_ratio > 0.871)
 
 cropped_overcast_1 <- combined_overcast_1[,c(1,19,26:33, 35:37)]
 
@@ -337,10 +311,9 @@ cropped_overcast_2 <- combined_overcast_2[,c(1,19,26:33, 35:37)]
 
 full_overcast_model_2 <- lm(B_Optimal_Power ~ .-Datetime-Overcast_Prediction,
                             data = cropped_overcast_2)
-
+summary(full_overcast_model)
 step_overcast_model_2 <- stepAIC(full_overcast_model_2, direction = "both", trace=FALSE)
 summary(step_overcast_model_2)
-
 
 ## model_2 is worse of the two
 
@@ -414,9 +387,6 @@ ggplot(reg_overcast[117500:118000,])+
 
 # Further Regression Sunny Model ------------------------------------------
 
-
-
-
 regression_model_sunny_1 <- lm(B_Optimal_Power ~ 
                                  Ambient_Temperature+Global_Radiation+Diffuse_Radiation+
                                  UV+Atmospheric_Pressure+Month+Hour,
@@ -458,11 +428,400 @@ ggplot(reg_sunny[115000:118000,])+
 
 ggplot(reg_sunny[117500:118000,])+
   geom_line(aes(x=Datetime, y=Regression_Prediction_1), col = 'blue')+
-  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')
+  geom_line(aes(x=Datetime, y=Regression_Prediction_2), col = 'red')+
+  geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
+
+# Final Sunlab regression -------------------------------------------------
+
+## The previous plots were all compared on similar times however really we would like to select the appropriate regression model
+## For a specific day/ time of day e.g. cloudy or sunny
+## There create a function to run a certain model depending on the value of radiation ratio
+
+## Already have allpossible  prediction values and models?
+## Function runs through each row,
+## if the value is greater than threshold add prediction to empty vector using model x on row I's weather values
+## specify output vector
+
+output <- matrix(nrow(combined_data), ncol = 1)
+
+output[2,1]
+
+for(i in nrow(combined_data)){
+  output[i,1] <- add_predictions(combined_data[i,26:36], regression_model_sunny_1)[,40]
+}
+
+output
+  
+  
+  
+if(combined_data[i,38] < 0.163) {
+  output[[i]] <- add_predictions(combined_data[i, ], regression_model_sunny_1)[i,length(combined_data)+1]
+} else if (combined_data[i,38] <= 0.378) {
+  output[[i]] <- add_predictions(combined_data[i, ], regression_model_sunny_2)[i,length(combined_data)+1]
+} else if (combined_data[i,38] <= 0.871) {
+  output[[i]] <- add_predictions(combined_data[i, ], regression_model_overcast_1)[i,length(combined_data)+1]
+} else {
+  output[[i]] <- add_predictions(combined_data[i, ], regression_model_overcast_2)[i,length(combined_data)+1]
+}
+
+## Function doesn't work so will do it by subsetting then recombining data.frames
+
+sun_1 <- subset(combined_data, Radiation_ratio <= 0.163)
+sun_2 <- subset(combined_data, Radiation_ratio <=0.378 & Radiation_ratio > 0.163)
+overcast_1 <- subset(combined_data, Radiation_ratio > 0.378 & Radiation_ratio <= 0.871)
+overcast_2 <- subset(combined_data, Radiation_ratio > 0.871)
+
+
+sun_1 <- add_predictions(sun_1, regression_model_sunny_1, var = "Regression_Prediction")
+sun_2 <- add_predictions(sun_2, regression_model_sunny_2, var = "Regression_Prediction")
+overcast_1 <- add_predictions(overcast_1, regression_model_overcast_1, var = "Regression_Prediction")
+overcast_2 <- add_predictions(overcast_2, regression_model_overcast_2, var = "Regression_Prediction")
+
+sun <- full_join(sun_1,sun_2)
+overcast <- full_join(overcast_1,overcast_2)
+final_regression_data <- full_join(sun,overcast)
+
+## Remove negatie values for Power
+
+final_regression_data$Regression_Prediction[final_regression_data$Regression_Prediction < 0] <- 0
+
+ggplot(final_regression_data)+geom_line(aes(x=Datetime, y= B_Optimal_Power))+
+  geom_line(aes(x=Datetime, y=Regression_Prediction))
+
+final_regression_data$Regression_Prediction
+
+r2_value <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction)^2
+r2_value
+
+summary(lm(B_Optimal_Power ~ 
+             Ambient_Temperature+Global_Radiation+Diffuse_Radiation+
+             Wind_Velocity+UV+Atmospheric_Pressure+Month+Hour, data = combined_data))
+
+## Not a large improvement in R^2 value after segmenting the data but still an improvement.
+
+# Group/Aggregate the data ----------------------------------------------------------
+
+## Aggregating to 5 min intervals 
+
+Five_Min_intervals <- combined_data %>% group_by(Datetime = cut(Datetime, breaks = "5 min")) %>%
+  summarise(B_Optimal_Power = mean(B_Optimal_Power), Ambient_Temperature = mean(Ambient_Temperature), 
+            Global_Radiation = mean(Global_Radiation),
+            Diffuse_Radiation = mean(Diffuse_Radiation), UV = mean(UV), Wind_Velocity = mean(Wind_Velocity),
+            Wind_Direction = mean(Wind_Direction), Precipitation = mean(Precipitation), 
+            Atmospheric_Pressure = mean(Atmospheric_Pressure), Radiation_ratio = mean(Radiation_ratio), 
+            Month= mean(Month), Hour = mean(Hour),
+            count = n())
+
+Ten_Min_intervals <- combined_data %>% group_by(Datetime = cut(Datetime, breaks = "10 min")) %>%
+  summarise(B_Optimal_Power = mean(B_Optimal_Power), Ambient_Temperature = mean(Ambient_Temperature), 
+            Global_Radiation = mean(Global_Radiation),
+            Diffuse_Radiation = mean(Diffuse_Radiation), UV = mean(UV), Wind_Velocity = mean(Wind_Velocity),
+            Wind_Direction = mean(Wind_Direction), Precipitation = mean(Precipitation), 
+            Atmospheric_Pressure = mean(Atmospheric_Pressure), Radiation_ratio = mean(Radiation_ratio),
+            Month= mean(Month), Hour = mean(Hour),
+            count = n())
+
+Thirty_Min_intervals <- combined_data %>% group_by(Datetime = cut(Datetime, breaks = "30 min")) %>%
+  summarise(B_Optimal_Power = mean(B_Optimal_Power), Ambient_Temperature = mean(Ambient_Temperature), 
+            Global_Radiation = mean(Global_Radiation),
+            Diffuse_Radiation = mean(Diffuse_Radiation), UV = mean(UV), Wind_Velocity = mean(Wind_Velocity),
+            Wind_Direction = mean(Wind_Direction), Precipitation = mean(Precipitation), 
+            Atmospheric_Pressure = mean(Atmospheric_Pressure), Radiation_ratio = mean(Radiation_ratio),
+            Month= mean(Month), Hour = mean(Hour),
+            count = n())
+
+# Aggregated five min overcast regression --------------------------------------------
+
+## Repeatting the same steps as taken in the models before but for aggregated data.
+
+regression_tree_five_agg <- tree(B_Optimal_Power ~ Radiation_ratio, data = Five_Min_intervals)
+plot(regression_tree_five_agg)
+text(regression_tree_five_agg, cex=1)
+
+## Creates more branches than for disaggregated data 
+
+combined_overcast_five_agg <- subset(Five_Min_intervals, Radiation_ratio >= 0.548)
+
+combined_overcast_1_five_min_agg <- subset(combined_overcast_five_agg, Radiation_ratio <= 0.923)
+combined_overcast_2_five_min_agg <- subset(combined_overcast_five_agg, Radiation_ratio > 0.923)
+
+full_overcast_model_1_five_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                            data = combined_overcast_1_five_min_agg)
+
+step_overcast_model_1_five_agg <- stepAIC(full_overcast_model_1_five_agg, direction = "both", trace=FALSE)
+summary(step_overcast_model_1_five_agg)
+
+full_overcast_model_2_five_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                            data = combined_overcast_2_five_min_agg)
+
+step_overcast_model_2_five_agg <- stepAIC(full_overcast_model_2_five_agg, direction = "both", trace=FALSE)
+summary(step_overcast_model_2_five_agg)
+
+## Now to add predictions to original data
+
+regression_model_overcast_1_five_min <- lm(B_Optimal_Power ~ 
+                                    Ambient_Temperature+Diffuse_Radiation+UV+
+                                    Wind_Velocity+Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                  data = combined_overcast_1_five_min_agg)
+
+regression_model_overcast_2_five_min <- lm(B_Optimal_Power ~ 
+                                    Ambient_Temperature+Global_Radiation+UV+
+                                    Wind_Velocity+Precipitation+Atmospheric_Pressure+Radiation_ratio+Hour,
+                                  data = combined_overcast_2_five_min_agg)
+
+# Aggregate five min sunny regression -------------------------------------
+
+## model_2 is worse of the two
+
+combined_sunny_five_agg <- subset(Five_Min_intervals, Radiation_ratio < 0.548)
+
+combined_sunny_1_five_min_agg <- subset(combined_sunny_five_agg, Radiation_ratio <= 0.166)
+combined_sunny_2_five_min_agg <- subset(combined_sunny_five_agg, Radiation_ratio > 0.166)
+
+## not going to split into the third level 
+
+
+full_sunny_model_1_five_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                     data = combined_sunny_1_five_min_agg)
+
+step_sunny_model_1_five_agg <- stepAIC(full_sunny_model_1_five_agg, direction = "both", trace=FALSE)
+summary(step_sunny_model_1_five_agg)
+
+full_sunny_model_2_five_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                     data = combined_sunny_2_five_min_agg)
+
+step_sunny_model_2_five_agg <- stepAIC(full_sunny_model_2_five_agg, direction = "both", trace=FALSE)
+summary(step_sunny_model_2_five_agg)
+
+## Linear models
+
+regression_model_sunny_1_five_min <- lm(B_Optimal_Power ~ 
+                                             Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+Precipitation+
+                                             Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                           data = combined_sunny_1_five_min_agg)
+
+regression_model_sunny_2_five_min <- lm(B_Optimal_Power ~ 
+                                             Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+
+                                             Wind_Velocity+Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                           data = combined_sunny_2_five_min_agg)
+
+
+# Adding aggregate to overall data ----------------------------------------
+
+sun_1_five <- subset(combined_data, Radiation_ratio <= 0.166)
+sun_2_five <- subset(combined_data, Radiation_ratio <=0.548 & Radiation_ratio > 0.166)
+overcast_1_five <- subset(combined_data, Radiation_ratio > 0.548 & Radiation_ratio <= 0.923)
+overcast_2_five <- subset(combined_data, Radiation_ratio > 0.923)
+
+
+sun_1 <- add_predictions(sun_1_five, regression_model_sunny_1_five_min, var = "Regression_Prediction_five_min")
+sun_2 <- add_predictions(sun_2_five, regression_model_sunny_2_five_min, var = "Regression_Prediction_five_min")
+overcast_1 <- add_predictions(overcast_1_five, regression_model_overcast_1_five_min, var = "Regression_Prediction_five_min")
+overcast_2 <- add_predictions(overcast_2_five, regression_model_overcast_2_five_min, var = "Regression_Prediction_five_min")
+
+sun <- full_join(sun_1,sun_2)
+overcast <- full_join(overcast_1,overcast_2)
+final_regression_data <- full_join(sun,overcast)
+
+r2_value_five_min <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction_five_min)^2
+r2_value_five_min
+
+## Higher value than for dissaggregated data.
+
+
+# Ten minute aggregation overcast -----------------------------------------
+
+regression_tree_ten_agg <- tree(B_Optimal_Power ~ Radiation_ratio, data = Ten_Min_intervals)
+plot(regression_tree_ten_agg)
+text(regression_tree_ten_agg, cex=1)
+
+## Creates more branches than for disaggregated data 
+
+combined_overcast_ten_agg <- subset(Ten_Min_intervals, Radiation_ratio >= 0.502)
+
+combined_overcast_1_ten_min_agg <- subset(combined_overcast_ten_agg, Radiation_ratio <= 0.889)
+combined_overcast_2_ten_min_agg <- subset(combined_overcast_ten_agg, Radiation_ratio > 0.889)
+
+full_overcast_model_1_ten_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                     data = combined_overcast_1_ten_min_agg)
+
+step_overcast_model_1_ten_agg <- stepAIC(full_overcast_model_1_ten_agg, direction = "both", trace=FALSE)
+summary(step_overcast_model_1_ten_agg)
+
+full_overcast_model_2_ten_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                     data = combined_overcast_2_ten_min_agg)
+
+step_overcast_model_2_ten_agg <- stepAIC(full_overcast_model_2_ten_agg, direction = "both", trace=FALSE)
+summary(step_overcast_model_2_ten_agg)
+
+## Now to add predictions to original data
+
+regression_model_overcast_1_ten_min <- lm(B_Optimal_Power ~ 
+                                             Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+
+                                             Wind_Velocity+Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                           data = combined_overcast_1_ten_min_agg)
+
+regression_model_overcast_2_ten_min <- lm(B_Optimal_Power ~ 
+                                             Ambient_Temperature+Global_Radiation+UV+
+                                             Wind_Velocity+Precipitation+Atmospheric_Pressure+Radiation_ratio+Hour,
+                                           data = combined_overcast_2_ten_min_agg)
+
+# Ten min aggregation sunny  -------------------------------------
+
+## model_2 is worse of the two
+
+combined_sunny_ten_agg <- subset(Ten_Min_intervals, Radiation_ratio < 0.502)
+
+combined_sunny_1_ten_min_agg <- subset(combined_sunny_ten_agg, Radiation_ratio <= 0.164)
+combined_sunny_2_ten_min_agg <- subset(combined_sunny_ten_agg, Radiation_ratio > 0.164)
+
+## not going to split into the third level 
+
+full_sunny_model_1_ten_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                  data = combined_sunny_1_ten_min_agg)
+
+step_sunny_model_1_ten_agg <- stepAIC(full_sunny_model_1_ten_agg, direction = "both", trace=FALSE)
+summary(step_sunny_model_1_ten_agg)
+
+full_sunny_model_2_ten_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                  data = combined_sunny_2_ten_min_agg)
+
+step_sunny_model_2_ten_agg <- stepAIC(full_sunny_model_2_ten_agg, direction = "both", trace=FALSE)
+summary(step_sunny_model_2_five_agg)
+
+## Linear models
+
+regression_model_sunny_1_ten_min <- lm(B_Optimal_Power ~ 
+                                          Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+Precipitation+
+                                          Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                        data = combined_sunny_1_ten_min_agg)
+
+regression_model_sunny_2_ten_min <- lm(B_Optimal_Power ~ 
+                                          Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+
+                                          Wind_Velocity+Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                        data = combined_sunny_2_ten_min_agg)
+
+
+# Adding aggregate to overall data ----------------------------------------
+
+sun_1_ten <- subset(combined_data, Radiation_ratio <= 0.164)
+sun_2_ten <- subset(combined_data, Radiation_ratio <=0.502 & Radiation_ratio > 0.164)
+overcast_1_ten <- subset(combined_data, Radiation_ratio > 0.502 & Radiation_ratio <= 0.889)
+overcast_2_ten <- subset(combined_data, Radiation_ratio > 0.889)
+
+
+sun_1 <- add_predictions(sun_1_ten, regression_model_sunny_1_ten_min, var = "Regression_Prediction_ten_min")
+sun_2 <- add_predictions(sun_2_ten, regression_model_sunny_2_ten_min, var = "Regression_Prediction_ten_min")
+overcast_1 <- add_predictions(overcast_1_ten, regression_model_overcast_1_ten_min, var = "Regression_Prediction_ten_min")
+overcast_2 <- add_predictions(overcast_2_ten, regression_model_overcast_2_ten_min, var = "Regression_Prediction_ten_min")
+
+sun <- full_join(sun_1,sun_2)
+overcast <- full_join(overcast_1,overcast_2)
+final_regression_data <- full_join(sun,overcast)
+
+r2_value_ten_min <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction_ten_min)^2
+r2_value_ten_min
+
+
+
+# Thirty min aggregation overcast --------------------------------------------------
+
+
+regression_tree_thirty_agg <- tree(B_Optimal_Power ~ Radiation_ratio, data = Thirty_Min_intervals)
+plot(regression_tree_thirty_agg)
+text(regression_tree_thirty_agg, cex=1)
+
+combined_overcast_thirty_agg <- subset(Thirty_Min_intervals, Radiation_ratio >= 0.518)
+
+combined_overcast_1_thirty_min_agg <- subset(combined_overcast_thirty_agg, Radiation_ratio <= 0.875)
+combined_overcast_2_thirty_min_agg <- subset(combined_overcast_thirty_agg, Radiation_ratio > 0.875)
+
+full_overcast_model_1_thirty_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                    data = combined_overcast_1_thirty_min_agg)
+
+step_overcast_model_1_thirty_agg <- stepAIC(full_overcast_model_1_thirty_agg, direction = "both", trace=FALSE)
+summary(step_overcast_model_1_thirty_agg)
+
+full_overcast_model_2_thirty_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                    data = combined_overcast_2_thirty_min_agg)
+
+step_overcast_model_2_thirty_agg <- stepAIC(full_overcast_model_2_thirty_agg, direction = "both", trace=FALSE)
+summary(step_overcast_model_2_thirty_agg)
+
+## Now to add predictions to original data
+
+regression_model_overcast_1_thirty_min <- lm(B_Optimal_Power ~ 
+                                            Ambient_Temperature+Global_Radiation+UV+
+                                            Wind_Velocity+Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                          data = combined_overcast_1_thirty_min_agg)
+
+regression_model_overcast_2_thirty_min <- lm(B_Optimal_Power ~ 
+                                            Ambient_Temperature+Global_Radiation+UV+
+                                            Wind_Velocity+Atmospheric_Pressure+Radiation_ratio+Hour,
+                                          data = combined_overcast_2_thirty_min_agg)
+
+# Ten min aggregation sunny  -------------------------------------
+
+## model_2 is worse of the two
+
+combined_sunny_thirty_agg <- subset(Ten_Min_intervals, Radiation_ratio < 0.518)
+
+combined_sunny_1_thirty_min_agg <- subset(combined_sunny_thirty_agg, Radiation_ratio <= 0.162)
+combined_sunny_2_thirty_min_agg <- subset(combined_sunny_thirty_agg, Radiation_ratio > 0.162)
+
+## not going to split into the third level 
+
+full_sunny_model_1_thirty_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                 data = combined_sunny_1_thirty_min_agg)
+
+step_sunny_model_1_thirty_agg <- stepAIC(full_sunny_model_1_thirty_agg, direction = "both", trace=FALSE)
+summary(step_sunny_model_1_thirty_agg)
+
+full_sunny_model_2_thirty_agg <- lm(B_Optimal_Power ~ .-Datetime,
+                                 data = combined_sunny_2_thirty_min_agg)
+
+step_sunny_model_2_thirty_agg <- stepAIC(full_sunny_model_2_thirty_agg, direction = "both", trace=FALSE)
+summary(step_sunny_model_2_thirty_agg)
+
+## Aggregation seems to make sunny data easier to predict 
+
+## Linear models
+
+regression_model_sunny_1_thirty_min <- lm(B_Optimal_Power ~ 
+                                         Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+
+                                         Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                       data = combined_sunny_1_thirty_min_agg)
+
+regression_model_sunny_2_thirty_min <- lm(B_Optimal_Power ~ 
+                                         Ambient_Temperature+Global_Radiation+Diffuse_Radiation+UV+
+                                         Wind_Velocity+Atmospheric_Pressure+Radiation_ratio+Hour+Month,
+                                       data = combined_sunny_2_thirty_min_agg)
+
+
+# Adding aggregate to overall data ----------------------------------------
+
+sun_1_thirty <- subset(combined_data, Radiation_ratio <= 0.162)
+sun_2_thirty <- subset(combined_data, Radiation_ratio <=0.518 & Radiation_ratio > 0.162)
+overcast_1_thirty <- subset(combined_data, Radiation_ratio > 0.518 & Radiation_ratio <= 0.875)
+overcast_2_thirty <- subset(combined_data, Radiation_ratio > 0.875)
+
+
+sun_1 <- add_predictions(sun_1_thirty, regression_model_sunny_1_thirty_min, var = "Regression_Prediction_thirty_min")
+sun_2 <- add_predictions(sun_2_thirty, regression_model_sunny_2_thirty_min, var = "Regression_Prediction_thirty_min")
+overcast_1 <- add_predictions(overcast_1_thirty, regression_model_overcast_1_thirty_min, var = "Regression_Prediction_thirty_min")
+overcast_2 <- add_predictions(overcast_2_thirty, regression_model_overcast_2_thirty_min, var = "Regression_Prediction_thirty_min")
+
+sun <- full_join(sun_1,sun_2)
+overcast <- full_join(overcast_1,overcast_2)
+final_regression_data <- full_join(sun,overcast)
+
+r2_value_thirty_min <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction_thirty_min)^2
+r2_value_thirty_min
 
 # Ridge Regression Overcast --------------------------------------------------------
 
-ridge_overcast <- glmnet(x_overcast,y_overcast, intercept= FALSE, family = "gaussian",alpha = 0)
+ridge_overcast <- glmnet(x_overcast,y_overcast, intercept= FALSE, family = "gaussian",alpha = 1)
 print(ridge)
 
 plot(ridge,xvar ="lambda")
@@ -474,34 +833,19 @@ cvfit_overcast$lambda.min
 cvfit_overcast$lambda.1se
 
 s_coef <- coef.cv.glmnet(cvfit_overcast, s="lambda.1se")
+s_coef
 
 prediction <- predict(cvfit_overcast,x_overcast,s="lambda.1se")
-combined_overcast <- data.frame(combined_overcast,prediction)
-names(combined_overcast)[37] <- "Overcast_Prediction"
 
-r2 <- ridge_overcast$glmnet.fit$dev.ratio[which(fitnet$glmnet.fit$lambda == fitnet$lambda.1se)] 
+cor(prediction, y_overcast)^2
 
-ggplot(combined_overcast[1:40000,])+geom_line(aes(x=Datetime, y=B_Optimal_Power),col='red')+
-  geom_line(aes(x=Datetime, y= Overcast_Prediction), col='blue')
-
-difference <- prediction - y_overcast
-
-plot(combined_overcast$Datetime,prediction, type = "l")
-
-data.f <- data.frame(combined_overcast$Datetime,prediction,y_overcast)
-ggplot(data.f,aes(combined_overcast$Datetime))+ geom_line(aes(y=difference),colour = "red")
-
-summary(difference)
-
-ggplot(meteo_2016)+geom_line(aes(x=Datetime,y=Ambient_Temperature))
-## Seems to over predict by a constant value and under predicts more often than over.
-
+## R^2 value of 0.767
 
 # Ridge Regression Sunny --------------------------------------------------
 
 
 
-ridge_sunny <- glmnet(x_sunny,y_sunny,family = "gaussian",alpha = 0)
+ridge_sunny <- glmnet(x_sunny,y_sunny,family = "gaussian",alpha = 1)
 print(ridge_sunny)
 
 cvfit_sunny <- cv.glmnet(x_sunny,y_sunny)
@@ -527,79 +871,4 @@ ggplot(combined_sunny[1:40000,])+geom_line(aes(x=Datetime, y=B_Optimal_Power),co
   geom_line(aes(x=Datetime, y= Sunny_Prediction), col='blue')
 
 ## Under predicts for jan to march but over predicts in june 
-
-
-
-
-# Web Scrapping  ----------------------------------------------------------
-
-## To get information of cloudy days
-
-url <- 'https://sunsetsunrisetime.com/portugal/faro_16730.html'
-
-faro_webpage <- read_html(url)
-
-## Can't see /faro-weather-history/ or /faro/ or /pt.aspx in robots.txt file so assume it is ok to scrape this page
-
-sunrise_data <- html_nodes(faro_webpage, "table")
-head(sunrise_data)
-
-h <- html_nodes(faro_webpage, ".period-link")
-head(h)
-
-sunrise_Table <- faro_webpage %>% 
-  html_nodes("#data_table_1") %>% html_table(fill=TRUE) %>% .[[1]]
-
-sunrise_table <- html_table(faro_webpage, 'data_table_1', fill=TRUE)
-
-API_key <- '7065813102924e24939231735190901'
- 
-sunrise <- url %>%
-    html() %>%
-    read_html(xpath='//*[@id="data_table_1"]') %>%
-   html_table(fill=TRUE)
-
-head(population)
-## dUNNO
-
-# Group/Aggregate the data ----------------------------------------------------------
-
-## 2017
-
-## May want to group the data into months at first
-
-By_month <- total_meteo %>% group_by(Month) %>% 
-  summarise(mean_temp = mean(Ambient_Temperature), max_temp = max(Ambient_Temperature), 
-            min_temp = min(Ambient_Temperature), mean_radiation = mean(Global_Radiation), mean_wind_vel = mean(Wind_Velocity),
-            mean_precip = mean(Precipitation), mean_atmo = mean(Atmospheric_Pressure), count = n())
-
-ggplot(By_month_2017)+geom_line(aes(x=Month, y=mean_radiation))
-
-By_day <- total_meteo %>% group_by(Date) %>% 
-  summarise(mean_temp = mean(Ambient_Temperature), max_temp = max(Ambient_Temperature), 
-            min_temp = min(Ambient_Temperature), mean_radiation = mean(Global_Radiation), mean_wind_vel = mean(Wind_Velocity),
-            mean_precip = mean(Precipitation), mean_atmo = mean(Atmospheric_Pressure), count = n(),
-            missing_time_mins = (1440-n()))
-
-## per day there should be 1440 counts, can calculate the missing time for each day by this 
-
-ggplot(By_day)+geom_line(aes(x=Date, y=missing_time_mins))
-
-## only one day in march with duplicates (26th) the rest have days missing
-## find these days and remove them?
-
-## Aggregating to 5 min intervals 
-
-Five_Min_intervals <- total_meteo %>% group_by(Datetime = cut(Datetime, breaks = "5 min")) %>%
-  summarise(Ambient_Temperature = mean(Ambient_Temperature), Global_Radiation = mean(Global_Radiation),
-            Diffuse_Radiation = mean(Diffuse_Radiation), UV = mean(UV), Wind_Velocity = mean(Wind_Velocity),
-            Wind_Direction = mean(Wind_Direction), Precipitation = mean(Precipitation), 
-            Atmospheric_Pressure = mean(Atmospheric_Pressure),count = n(), missing_time_mins = (5-n()))
-
-
-
-
-
-
-
 
