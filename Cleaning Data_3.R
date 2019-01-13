@@ -727,7 +727,7 @@ overcast_2 <- add_predictions(overcast_2_ten, regression_model_overcast_2_ten_mi
 
 sun <- full_join(sun_1,sun_2)
 overcast <- full_join(overcast_1,overcast_2)
-final_regression_data <- full_join(sun,overcast)
+final_regression_data_ten_min <- full_join(sun,overcast)
 
 r2_value_ten_min <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction_ten_min)^2
 r2_value_ten_min
