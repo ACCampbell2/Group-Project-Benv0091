@@ -17,6 +17,11 @@ library(leaps)
 library(MASS)
 library(caret)
 
+## Apologies for the state of the code. 
+## I ran out of time to clean it and on hindsight should have split it into multiple files or tried harder to write the fucntion to make it less repetative. 
+
+
+
 # Import -------------------------------------------------------------------
 
 ## My working directory for the data
@@ -80,8 +85,7 @@ meteo_2016$Wind_Velocity <- as.numeric(meteo_2016$Wind_Velocity)
 
 # Editing Data -----------------------------------------------------------
 
-## Adding columns for time and dates to make sorting and aggreagating the data simplier 
-
+## Adding columns for time and dates to make sorting and aggreagating the data simpler 
 
 meteo_2017$Datetime <- ymd_hms(meteo_2017$Datetime)
 meteo_2017$Date <- as.Date(as_date(meteo_2017$Datetime))
@@ -163,7 +167,8 @@ pvsunlab_2017$Month <- month(pvsunlab_2017$Datetime)
 pvsunlab_2017$MDay <- mday(pvsunlab_2017$Datetime)
 pvsunlab_2017$Minutes <- minute(pvsunlab_2017$Datetime)
 
-t#combine the data
+#combine the data
+
 total_2016 = full_join(pvsunlab_2016,meteo_2016)
 total_2016 <- drop_na(total_2016)
 total_2017 = full_join(pvsunlab_2017,meteo_2017)
@@ -195,7 +200,19 @@ combined_data <- combined_data %>% filter(B_Optimal_Power < 243)
 
 # Exploratory Graphs ------------------------------------------------------
 
-## Plot to show distribution of temperature over the two years.
+## Plotting general residuals between the data  
+
+corrs <- as.matrix(total_sun[, 7:16])
+n <- cor(corrs)
+n
+
+full_model <- lm(B_Optimal_Power~. , data = total_sun)
+summary(full_model)
+
+## Skew due to boundary for actual power output at 0W so and vlaue  below 0 will be have a positive residual. 
+
+ggplot(total_sun)+geom_point(aes(x=Datetime, y=B_Optimal_Power))
+
 
 ggplot(combined_data)+geom_boxplot(aes(x=as.factor(Month), y=Ambient_Temperature))
 
@@ -209,23 +226,24 @@ by_date <- combined_data %>% group_by(Date) %>%
 summarise(B_Optimal_Power = mean(B_Optimal_Power), Ambient_Temperature = mean(Ambient_Temperature), Global_Radiation = mean(Global_Radiation),
          Diffuse_Radiation = mean(Global_Radiation),UV = mean(UV), Wind_Velocity = mean(Wind_Velocity),
         Wind_Direction = mean(Wind_Direction), Precipitation = mean(Precipitation), 
-                              Atmospheric_Pressure =mean(Atmospheric_Pressure), Year = mean(Year), Month = mean(Month))
+                              Atmospheric_Pressure =mean(Atmospheric_Pressure),
+        Month = mean(Month))
+by_date$Year <- year(by_date$Date)
+                     
   
-ggplot(by_date,aes(x = Date, y= Ambient_Temperature, color = Year))+ geom_point()+ geom_smooth(col = 'black')
+ggplot(by_date,aes(x = Date, y= Ambient_Temperature, color = Year))+ geom_point()+ geom_smooth(col = 'black')+
+  ylab("Ambient Temperature")+theme(legend.position = "none")
 
 ggplot(by_date,aes(x = Date, y= B_Optimal_Power, color = Year))+ geom_point()+ geom_smooth(col = 'black')
-
-ggplot(by_date,aes(x = as.factor(Month), y= B_Optimal_Power))+ geom_boxplot()
 
 ## More consistent power outputs in the summer
 
 # Classification ----------------------------------------------------------
 
-ggplot(combined_data)+geom_point(aes(x=Radiation_ratio, y= B_Optimal_Power))
+## Plot for the radiation ratio to show the large drop in values above 1 
 
-regression_tree <- tree(B_Optimal_Power ~ Global_Radiation + Diffuse_Radiation, data = combined_data)
-plot(regression_tree)
-text(regression_tree, cex=1)
+ggplot(combined_data)+geom_point(aes(x=Radiation_ratio, y= B_Optimal_Power))+
+  xlab("Radiation Ratio")+ylab("Module B Optimal Power Output (W)")
 
 regression_tree_2 <- tree(B_Optimal_Power ~ Radiation_ratio, data = combined_data)
 plot(regression_tree_2)
@@ -409,16 +427,14 @@ overcast_2 <- add_predictions(overcast_2, regression_model_overcast_2, var = "Re
 
 sun <- full_join(sun_1,sun_2)
 overcast <- full_join(overcast_1,overcast_2)
-final_regression_data <- full_join(sun,overcast)
+final_regression_data_disagg <- full_join(sun,overcast)
 
 ## Remove negatie values for Power
 
-ggplot(final_regression_data)+geom_line(aes(x=Datetime, y= B_Optimal_Power),col='red')+
-  geom_line(aes(x=Datetime, y=Regression_Prediction),col='blue')
+ggplot(final_regression_data_disagg[156500:157000,])+geom_line(aes(x=Datetime, y= B_Optimal_Power),col='red')+
+  geom_point(aes(x=Datetime, y=Regression_Prediction),col='blue')
 
-final_regression_data$Regression_Prediction
-
-r2_value <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction)^2
+r2_value <- cor(final_regression_data_disagg$B_Optimal_Power, final_regression_data_disagg$Regression_Prediction)^2
 r2_value
 
 ## Using the test sample to verify the R^2 value?
@@ -441,8 +457,11 @@ final_regression_data_test <- full_join(sun_test,overcast_test)
 r2_value_test <- cor(final_regression_data_test$B_Optimal_Power, final_regression_data_test$Regression_Prediction)^2
 r2_value_test
 
+final_regresssion_data_test <- arrange(final_regresssion_data_test, Datetime)
+
+
 Full_model_error_plot <- 
-  ggplot(final_regression_data)+geom_line(aes(x=Datetime, y= B_Optimal_Power), col = 'red')+
+  ggplot(final_regression_data_test)+geom_line(aes(x=Datetime, y= B_Optimal_Power), col = 'red')+
   geom_line(aes(x=Datetime, y= Regression_Prediction),col = 'blue')
 Full_model_error_plot
 
@@ -592,7 +611,27 @@ final_regression_data <- full_join(sun,overcast)
 r2_value_five_min <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction_five_min)^2
 r2_value_five_min
 
-## Higher value than for dissaggregated data.
+
+
+## Now against test data
+
+sun_1_test_five <- subset(combined_sunny_test, Radiation_ratio <= 0.163)
+sun_2_test_five <- subset(combined_sunny_test, Radiation_ratio <=0.528 & Radiation_ratio > 0.163)
+overcast_1_test_five <- subset(combined_overcast_test, Radiation_ratio > 0.528 & Radiation_ratio <= 0.917)
+overcast_2_test_five <- subset(combined_overcast_test, Radiation_ratio > 0.917)
+
+
+sun_1_test_five <- add_predictions(sun_1_test_five, regression_model_sunny_1_five_min, var = "Regression_Prediction_five")
+sun_2_test_five <- add_predictions(sun_2_test_five, regression_model_sunny_2_five_min, var = "Regression_Prediction_five")
+overcast_1_test_five <- add_predictions(overcast_1_test_five, regression_model_overcast_1_five_min, var = "Regression_Prediction_five")
+overcast_2_test_five <- add_predictions(overcast_2_test_five, regression_model_overcast_2_five_min, var = "Regression_Prediction_five")
+
+sun_test_five <- full_join(sun_1_test_five,sun_2_test_five)
+overcast_test_five <- full_join(overcast_1_test_five,overcast_2_test_five)
+final_regression_data_test_five <- full_join(sun_test_five,overcast_test_five)
+
+r2_value_test_five <- cor(final_regression_data_test_five$B_Optimal_Power, final_regression_data_test_five$Regression_Prediction_five)^2
+r2_value_test_five
 
 
 # Ten minute aggregation overcast -----------------------------------------
@@ -689,7 +728,25 @@ r2_value_ten_min <- cor(final_regression_data_ten_min$B_Optimal_Power,
                         final_regression_data_ten_min$Regression_Prediction_ten_min)^2
 r2_value_ten_min
 
+## On test data
 
+sun_1_test_ten <- subset(combined_sunny_test, Radiation_ratio <= 0.165)
+sun_2_test_ten <- subset(combined_sunny_test, Radiation_ratio <=0.513 & Radiation_ratio > 0.165)
+overcast_1_test_ten <- subset(combined_overcast_test, Radiation_ratio > 0.513 & Radiation_ratio <= 0.881)
+overcast_2_test_ten <- subset(combined_overcast_test, Radiation_ratio > 0.881)
+
+
+sun_1_test_ten <- add_predictions(sun_1_test_ten, regression_model_sunny_1_ten_min, var = "Regression_Prediction_ten")
+sun_2_test_ten <- add_predictions(sun_2_test_ten, regression_model_sunny_2_ten_min, var = "Regression_Prediction_ten")
+overcast_1_test_ten <- add_predictions(overcast_1_test_ten, regression_model_overcast_1_ten_min, var = "Regression_Prediction_ten")
+overcast_2_test_ten <- add_predictions(overcast_2_test_ten, regression_model_overcast_2_ten_min, var = "Regression_Prediction_ten")
+
+sun_test_ten <- full_join(sun_1_test_ten,sun_2_test_ten)
+overcast_test_ten <- full_join(overcast_1_test_ten,overcast_2_test_ten)
+final_regression_data_test_ten <- full_join(sun_test_ten,overcast_test_ten)
+
+r2_value_test_ten <- cor(final_regression_data_test_ten$B_Optimal_Power, final_regression_data_test_ten$Regression_Prediction_ten)^2
+r2_value_test_ten
 
 # Thirty min aggregation overcast --------------------------------------------------
 
@@ -785,9 +842,28 @@ final_regression_data <- full_join(sun,overcast)
 r2_value_thirty_min <- cor(final_regression_data$B_Optimal_Power, final_regression_data$Regression_Prediction_thirty_min)^2
 r2_value_thirty_min
 
+## Test data
+
+sun_1_test_thirty <- subset(combined_sunny_test, Radiation_ratio <= 0.163)
+sun_2_test_thirty <- subset(combined_sunny_test, Radiation_ratio <=0.516 & Radiation_ratio > 0.163)
+overcast_1_test_thirty <- subset(combined_overcast_test, Radiation_ratio > 0.516 & Radiation_ratio <= 0.897)
+overcast_2_test_thirty <- subset(combined_overcast_test, Radiation_ratio > 0.897)
+
+sun_1_test_thirty <- add_predictions(sun_1_test_thirty, regression_model_sunny_1_thirty_min, var = "Regression_Prediction_thirty")
+sun_2_test_thirty <- add_predictions(sun_2_test_thirty, regression_model_sunny_2_thirty_min, var = "Regression_Prediction_thirty")
+overcast_1_test_thirty <- add_predictions(overcast_1_test_thirty, regression_model_overcast_1_thirty_min, var = "Regression_Prediction_thirty")
+overcast_2_test_thirty <- add_predictions(overcast_2_test_thirty, regression_model_overcast_2_thirty_min, var = "Regression_Prediction_thirty")
+
+sun_test_thirty <- full_join(sun_1_test_thirty,sun_2_test_thirty)
+overcast_test_thirty <- full_join(overcast_1_test_thirty,overcast_2_test_thirty)
+final_regression_data_test_thirty <- full_join(sun_test_thirty,overcast_test_thirty)
+
+r2_value_test_thirty <- cor(final_regression_data_test_thirty$B_Optimal_Power, final_regression_data_test_thirty$Regression_Prediction_thirty)^2
+r2_value_test_thirty
+
 # Lasso Regression Overcast --------------------------------------------------------
 
-x_overcast <- as.matrix(combined_overcast[,-7])
+x_overcast <- as.matrix(combined_overcast[,c(4:6,8:16)])
 y_overcast <- as.matrix(combined_overcast[,7])
 
 lasso_overcast <- glmnet(x_overcast,y_overcast, intercept= FALSE, family = "gaussian",alpha = 1)
@@ -803,7 +879,7 @@ cor(prediction_overcast, y_overcast)^2
 
 # Lasso Regression Sunny --------------------------------------------------
 
-x_sunny <- as.matrix(combined_sunny[,-7])
+x_sunny <- as.matrix(combined_sunny[,c(4:6,8:16)])
 y_sunny <- as.matrix(combined_sunny[,7])
 
 lasso_sunny <- glmnet(x_sunny,y_sunny,family = "gaussian",alpha = 1)
@@ -814,13 +890,13 @@ prediction_sunny <- predict(cvfit_sunny,x_sunny,s="lambda.1se")
 
 cor(prediction_sunny, y_sunny)^2
 
-## The r^2 value is 0.753
+## The r^2 value is 0.793
 
 ## Does the lower R^2 value suggest the other model has a higher variance as it has included more parameters.
 
 # Lasso regression further subset -----------------------------------------
 
-x_overcast_1 <- as.matrix(combined_overcast_1[,-7])
+x_overcast_1 <- as.matrix(combined_overcast_1[,c(4:6,8:16)])
 y_overcast_1 <- as.matrix(combined_overcast_1[,7])
 
 lasso_overcast_1 <- glmnet(x_overcast_1,y_overcast_1, intercept= FALSE, family = "gaussian",alpha = 1)
@@ -832,7 +908,7 @@ prediction_overcast_1 <- predict(cvfit_overcast_1,x_overcast_1,s="lambda.1se")
 
 cor(prediction_overcast_1, y_overcast_1)^2
 
-x_overcast_2 <- as.matrix(combined_overcast_2[,-7])
+x_overcast_2 <- as.matrix(combined_overcast_2[,c(4:6,8:16)])
 y_overcast_2 <- as.matrix(combined_overcast_2[,7])
 
 lasso_overcast_2 <- glmnet(x_overcast_2,y_overcast_2, intercept= FALSE, family = "gaussian",alpha = 1)
